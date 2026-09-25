@@ -1,0 +1,28 @@
+name: Finalize v1.0.0 tag
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/finalize-tag.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove finalizer and move release tag
+        run: |
+          git config user.name "ELUQEN Release Bot"
+          git config user.email "support@eluqen.com"
+          git rm .github/workflows/finalize-tag.yml
+          git commit -m "Finalize Sensor Lock 1.0.0 repository"
+          git push origin main
+          git tag -f v1.0.0 HEAD
+          git push origin refs/tags/v1.0.0 --force
