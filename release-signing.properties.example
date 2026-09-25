@@ -1,0 +1,7 @@
+# Copy this file to release-signing.properties only when a real release key exists.
+# release-signing.properties is intentionally ignored by Git.
+# Use a keystore owned and backed up by the app owner.
+storeFile=/absolute/path/to/sensor-lock-release.jks
+storePassword=CHANGE_ME
+keyAlias=sensor-lock-release
+keyPassword=CHANGE_ME

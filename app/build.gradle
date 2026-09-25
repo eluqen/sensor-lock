@@ -1,0 +1,88 @@
+plugins {
+    id 'com.android.application'
+}
+
+def releaseSigningPropertiesFile = rootProject.file('release-signing.properties')
+def releaseSigningProperties = new Properties()
+def allowUnsignedRelease = project.hasProperty('allowUnsignedRelease') &&
+        project.property('allowUnsignedRelease').toString().toBoolean()
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+
+if (releaseSigningPropertiesFile.exists()) {
+    releaseSigningPropertiesFile.withInputStream {
+        releaseSigningProperties.load(it)
+    }
+
+    def requiredSigningKeys = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']
+    def missingSigningKeys = requiredSigningKeys.findAll { !releaseSigningProperties[it] }
+    if (!missingSigningKeys.isEmpty()) {
+        throw new GradleException(
+                "Missing release signing properties: " + missingSigningKeys.join(', '))
+    }
+
+    def configuredStore = rootProject.file(releaseSigningProperties['storeFile']).canonicalFile
+    def forbiddenProbeStore = new File('/tmp/sensorlock-probe/probe.keystore').canonicalFile
+    if (configuredStore == forbiddenProbeStore ||
+            releaseSigningProperties['keyAlias'] == 'sensorlockprobe') {
+        throw new GradleException(
+                'Probe/Test signing key is forbidden for release builds. Use the user-owned release key.')
+    }
+} else if (releaseTaskRequested && !allowUnsignedRelease) {
+    throw new GradleException(
+            'Release signing is not configured. Create release-signing.properties using the user-owned release key.')
+}
+
+android {
+    compileSdk 35
+    namespace "com.eluqen.sensorlock"
+
+    defaultConfig {
+        applicationId "com.eluqen.sensorlock"
+        minSdk 30
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningPropertiesFile.exists()) {
+                storeFile rootProject.file(releaseSigningProperties['storeFile'])
+                storePassword releaseSigningProperties['storePassword']
+                keyAlias releaseSigningProperties['keyAlias']
+                keyPassword releaseSigningProperties['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (releaseSigningPropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            } else if (!allowUnsignedRelease) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+}
+
+dependencies {
+    implementation project(path: ':libadb')
+    implementation 'androidx.annotation:annotation:1.9.1'
+    implementation 'com.github.MuntashirAkon:sun-security-android:1.1'
+    implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:6.1'
+}
