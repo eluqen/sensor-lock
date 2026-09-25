@@ -1,0 +1,4 @@
+include ':libadb'
+include ':app'
+rootProject.name = 'SensorLock'
+project(':libadb').name = 'libadb'
