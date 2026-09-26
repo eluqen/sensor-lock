@@ -14,19 +14,29 @@ public class BootReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (intent == null || !Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
+        if (intent == null) return;
+        boolean boot = Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction());
+        boolean updated = Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction());
+        if (!boot && !updated) return;
 
-        SensorController.beginBootRecovery(context);
-        SensorController.cleanupNow(context);
+        // APK replacement can stop an app_process bridge even though the
+        // pairing key and sensor-privacy state are still valid. Do not rotate
+        // local bridge credentials, clear pairing, or restore setup settings.
+        if (boot) {
+            SensorController.beginBootRecovery(context);
+            SensorController.cleanupNow(context);
+        }
 
-        if (SensorController.isPairingVerified(context)
+        boolean canRecover = SensorController.isPairingVerified(context)
                 && context.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
-                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (canRecover) {
             SensorController.refreshConnectionHealthBackground(
                     context,
                     result -> SensorController.noteBackgroundRecoveryResult(
                             context, result.success));
         }
+        if (!boot && !canRecover) return;
 
         JobScheduler scheduler =
                 (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);

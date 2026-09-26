@@ -27,8 +27,10 @@ public class RecoveryJobService extends JobService {
                 });
 
         if (!started) {
-            jobFinished(params, true);
-            return true;
+            // Recovery was already queued by another component. This job did
+            // not initiate asynchronous work: finish synchronously rather than
+            // calling jobFinished and simultaneously claiming ongoing work.
+            return false;
         }
         return true;
     }

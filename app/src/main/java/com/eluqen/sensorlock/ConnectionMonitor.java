@@ -29,6 +29,8 @@ public final class ConnectionMonitor {
                     return;
                 }
 
+                if (SensorController.isToggleInFlight()) return;
+
                 if (!SensorController.isPairingVerified(app)
                         && !SensorController.isBridgeReadyCached(app)) {
                     return;

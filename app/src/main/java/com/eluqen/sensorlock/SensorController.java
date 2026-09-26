@@ -4,13 +4,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.provider.Settings;
-import android.service.quicksettings.TileService;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -65,6 +63,7 @@ public final class SensorController {
     private static final String BRIDGE_READY = "bridge_ready";
     private static final String REPAIR_REQUIRED = "repair_required";
     private static final String CONNECTION_ISSUE = "connection_issue";
+    private static final String HEALTH_CHECK_COMPLETED = "health_check_completed";
     private static final String DEBUG_SESSION_ACTIVE = "debug_session_active";
     private static final String BASE_DEV = "base_dev";
     private static final String BASE_WIFI = "base_wifi";
@@ -77,9 +76,12 @@ public final class SensorController {
     private static final long BACKGROUND_RECOVERY_RETRY_MS = 1_200L;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
-    private static final ExecutorService BACKGROUND_RECOVERY_WORKER = Executors.newSingleThreadExecutor();
+    // Bridge reads, recovery and user mutations share one serial executor.
+    // This prevents background recovery from racing a Quick Settings mutation.
+    private static final ExecutorService BACKGROUND_RECOVERY_WORKER = WORKER;
     private static final ExecutorService ADB_IO = Executors.newCachedThreadPool();
     private static final AtomicBoolean BACKGROUND_HEALTH_IN_FLIGHT = new AtomicBoolean(false);
+    private static final AtomicBoolean TOGGLE_IN_FLIGHT = new AtomicBoolean(false);
     private static volatile AbsAdbConnectionManager liveManager;
 
     private static final Pattern LOCAL_STATE =
@@ -207,6 +209,7 @@ public final class SensorController {
         }
 
         final Context c = context.getApplicationContext();
+        RecoveryDiagnostics.event("background_health_queued");
         BACKGROUND_RECOVERY_WORKER.submit(() -> {
             Result result;
             try {
@@ -234,12 +237,23 @@ public final class SensorController {
                 } else {
                     result = failure(c, repairMessageRes(c));
                 }
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                RecoveryDiagnostics.error("background_health_exception", t);
                 result = failure(c, repairMessageRes(c));
             } finally {
                 BACKGROUND_HEALTH_IN_FLIGHT.set(false);
             }
 
+            // A successful health check often writes exactly the same cached
+            // state. SharedPreferences does not notify MainActivity in that
+            // case; emit an explicit completion edge AFTER clearing in-flight
+            // so a previously drawn "Reconnecting" can never stay latched.
+            prefs(c).edit().putLong(HEALTH_CHECK_COMPLETED,
+                    android.os.SystemClock.elapsedRealtimeNanos()).apply();
+            RecoveryDiagnostics.event(result.success
+                    ? "background_health_verified"
+                    : "background_health_failed issue=" + getConnectionIssue(c));
+            notifyTile(c);
             if (cb != null) deliver(cb, result);
         });
         return true;
@@ -268,7 +282,10 @@ public final class SensorController {
                     saveStateSilent(c, state.microphoneBlocked, state.cameraBlocked,
                             isPairingVerified(c));
                     markBridgeReady(c);
-                    probePairingIfPossible(c);
+                    // A functional local bridge is already verified. Do not
+                    // disconnect/reprobe the shared ADB manager on every UI
+                    // refresh: it cannot improve this proof and can disrupt an
+                    // in-progress recovery/authorization sequence.
                     deliver(cb, new Result(true, state.microphoneBlocked && state.cameraBlocked,
                             state.microphoneBlocked, state.cameraBlocked,
                             text(c, R.string.connection_ready), state.raw));
@@ -295,76 +312,196 @@ public final class SensorController {
         });
     }
 
-    public static void toggle(final Context context, final Callback cb) {
+    public static boolean isToggleInFlight() {
+        return TOGGLE_IN_FLIGHT.get();
+    }
+
+    public static boolean toggle(final Context context, final Callback cb) {
+        return toggle(context, TilePreferences.MODE_BOTH, cb);
+    }
+
+    public static boolean toggle(final Context context, final int requestedMode,
+                                 final Callback cb) {
         final Context c = context.getApplicationContext();
+        final int mode = TilePreferences.isValidMode(requestedMode)
+                ? requestedMode : TilePreferences.MODE_BOTH;
+
+        // A tap while a previous mutation is still running is intentionally dropped.
+        // This prevents delayed taps from becoming a burst of BLOCK/ALLOW commands.
+        if (!TOGGLE_IN_FLIGHT.compareAndSet(false, true)) {
+            RecoveryDiagnostics.event("mutation_duplicate_ignored");
+            notifyTile(c);
+            return false;
+        }
+
+        RecoveryDiagnostics.event("mutation_queued mode=" + mode
+                + " bg=" + BACKGROUND_HEALTH_IN_FLIGHT.get());
+        notifyTile(c);
         WORKER.submit(() -> {
             Boolean requestedTarget = null;
-
-            if (!DeviceCompatibility.isSupported(c)) {
-                deliver(cb, failure(c, R.string.unsupported_title));
-                return;
-            }
-            if (c.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
-                    != PackageManager.PERMISSION_GRANTED) {
-                deliver(cb, failure(c, R.string.setup_required));
-                return;
-            }
-
             try {
+                if (!DeviceCompatibility.isSupported(c)) {
+                    deliver(cb, failure(c, R.string.unsupported_title));
+                    return;
+                }
+                if (c.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
+                        != PackageManager.PERMISSION_GRANTED) {
+                    deliver(cb, failure(c, R.string.setup_required));
+                    return;
+                }
+
                 if (!ensureBridge(c)) {
                     deliver(cb, failure(c, repairMessageRes(c)));
+                    return;
+                }
+
+                // Per-sensor commands are capability-gated. An older bridge left
+                // alive across an app update is never sent a command it cannot
+                // understand or a fallback that could alter the wrong sensor.
+                if (mode != TilePreferences.MODE_BOTH && !ensureSelectiveBridge(c)) {
+                    int messageRes = isRepairRequired(c)
+                            ? repairMessageRes(c)
+                            : R.string.selective_control_service_refresh;
+                    deliver(cb, failure(c, messageRes));
                     return;
                 }
 
                 PrivacyState current = localState(c);
                 if (!current.valid) throw new Exception("Invalid local bridge state");
 
-                boolean target = !(current.microphoneBlocked && current.cameraBlocked);
+                boolean target = !selectedSensorsBlocked(current, mode);
                 requestedTarget = target;
-                String raw = LocalShellClient.request(c, target ? "BLOCK" : "ALLOW", 5000);
+                String raw = LocalShellClient.request(
+                        c, commandForMode(mode, target), 5000);
                 PrivacyState verified = parseLocalState(raw);
 
-                if (!verified.valid ||
-                        verified.microphoneBlocked != target ||
-                        verified.cameraBlocked != target) {
+                // Selected-only mode must NEVER claim success if the OTHER sensor
+                // also changed. This is a state-verification failure, not an
+                // invitation to retry the command and risk a second mutation.
+                if (verified.valid && !unselectedSensorsUnchanged(current, verified, mode)) {
+                    RecoveryDiagnostics.event("unselected_sensor_changed_during_mutation");
+                    markBridgeReady(c);
+                    saveState(c, verified.microphoneBlocked, verified.cameraBlocked,
+                            text(c, R.string.unselected_sensor_changed), isPairingVerified(c));
+                    deliver(cb, new Result(false, false, verified.microphoneBlocked,
+                            verified.cameraBlocked,
+                            text(c, R.string.unselected_sensor_changed), raw));
+                    return;
+                }
+                if (!verified.valid || !selectedSensorsMatch(verified, mode, target)) {
                     throw new Exception("Local bridge verification failed");
                 }
 
-                String message = text(c, target ? R.string.success_blocked : R.string.success_allowed);
-                saveState(c, verified.microphoneBlocked, verified.cameraBlocked, message, isPairingVerified(c));
+                String message = text(c, successMessageRes(mode, target));
                 markBridgeReady(c);
+                saveState(c, verified.microphoneBlocked, verified.cameraBlocked,
+                        message, isPairingVerified(c));
                 deliver(cb, new Result(true, target, verified.microphoneBlocked,
                         verified.cameraBlocked, message, raw));
-                notifyTile(c);
-            } catch (Throwable t) {
+            } catch (Throwable first) {
                 noteBridgeStopped(c);
                 if (!recoverBridge(c)) {
                     deliver(cb, failure(c, repairMessageRes(c)));
-                    notifyTile(c);
                     return;
                 }
 
                 try {
+                    if (mode != TilePreferences.MODE_BOTH && !ensureSelectiveBridge(c)) {
+                        int messageRes = isRepairRequired(c)
+                                ? repairMessageRes(c)
+                                : R.string.selective_control_service_refresh;
+                        deliver(cb, failure(c, messageRes));
+                        return;
+                    }
+
                     PrivacyState current = localState(c);
+                    if (!current.valid) throw new Exception("Invalid recovered state");
+
                     boolean target = requestedTarget != null
                             ? requestedTarget.booleanValue()
-                            : !(current.microphoneBlocked && current.cameraBlocked);
-                    String raw = LocalShellClient.request(c, target ? "BLOCK" : "ALLOW", 5000);
+                            : !selectedSensorsBlocked(current, mode);
+                    String raw = LocalShellClient.request(
+                            c, commandForMode(mode, target), 5000);
                     PrivacyState verified = parseLocalState(raw);
-                    if (!verified.valid) throw new Exception("Invalid recovered state");
-                    String message = text(c, target ? R.string.success_blocked : R.string.success_allowed);
-                    saveState(c, verified.microphoneBlocked, verified.cameraBlocked, message, isPairingVerified(c));
+                    if (verified.valid && !unselectedSensorsUnchanged(current, verified, mode)) {
+                        RecoveryDiagnostics.event("unselected_sensor_changed_during_recovery");
+                        markBridgeReady(c);
+                        saveState(c, verified.microphoneBlocked, verified.cameraBlocked,
+                                text(c, R.string.unselected_sensor_changed), isPairingVerified(c));
+                        deliver(cb, new Result(false, false, verified.microphoneBlocked,
+                                verified.cameraBlocked,
+                                text(c, R.string.unselected_sensor_changed), raw));
+                        return;
+                    }
+                    if (!verified.valid || !selectedSensorsMatch(verified, mode, target)) {
+                        throw new Exception("Invalid recovered state");
+                    }
+
+                    String message = text(c, successMessageRes(mode, target));
                     markBridgeReady(c);
+                    saveState(c, verified.microphoneBlocked, verified.cameraBlocked,
+                            message, isPairingVerified(c));
                     deliver(cb, new Result(true, target, verified.microphoneBlocked,
                             verified.cameraBlocked, message, raw));
-                    notifyTile(c);
                 } catch (Throwable second) {
                     markRepair(c, ISSUE_SERVICE_START_FAILED);
                     deliver(cb, failure(c, R.string.connection_repair_required));
-                    notifyTile(c);
                 }
+            } finally {
+                TOGGLE_IN_FLIGHT.set(false);
+                notifyTile(c);
+                RecoveryDiagnostics.event("mutation_worker_finished issue=" + getConnectionIssue(c));
             }
         });
+        return true;
+    }
+
+    private static boolean selectedSensorsBlocked(PrivacyState state, int mode) {
+        boolean cameraOk = (mode & TilePreferences.MODE_CAMERA) == 0
+                || state.cameraBlocked;
+        boolean microphoneOk = (mode & TilePreferences.MODE_MICROPHONE) == 0
+                || state.microphoneBlocked;
+        return cameraOk && microphoneOk;
+    }
+
+    private static boolean selectedSensorsMatch(PrivacyState state, int mode,
+                                                boolean blocked) {
+        if ((mode & TilePreferences.MODE_CAMERA) != 0
+                && state.cameraBlocked != blocked) return false;
+        if ((mode & TilePreferences.MODE_MICROPHONE) != 0
+                && state.microphoneBlocked != blocked) return false;
+        return true;
+    }
+
+    private static boolean unselectedSensorsUnchanged(PrivacyState before,
+                                                     PrivacyState after, int mode) {
+        if ((mode & TilePreferences.MODE_CAMERA) == 0
+                && before.cameraBlocked != after.cameraBlocked) return false;
+        if ((mode & TilePreferences.MODE_MICROPHONE) == 0
+                && before.microphoneBlocked != after.microphoneBlocked) return false;
+        return true;
+    }
+
+    private static String commandForMode(int mode, boolean blocked) {
+        if (mode == TilePreferences.MODE_CAMERA) {
+            return blocked ? "BLOCK_CAMERA" : "ALLOW_CAMERA";
+        }
+        if (mode == TilePreferences.MODE_MICROPHONE) {
+            return blocked ? "BLOCK_MICROPHONE" : "ALLOW_MICROPHONE";
+        }
+        return blocked ? "BLOCK" : "ALLOW";
+    }
+
+    private static int successMessageRes(int mode, boolean blocked) {
+        if (mode == TilePreferences.MODE_CAMERA) {
+            return blocked ? R.string.success_camera_blocked
+                    : R.string.success_camera_allowed;
+        }
+        if (mode == TilePreferences.MODE_MICROPHONE) {
+            return blocked ? R.string.success_microphone_blocked
+                    : R.string.success_microphone_allowed;
+        }
+        return blocked ? R.string.success_blocked : R.string.success_allowed;
     }
 
     public static void verify(final Context context, final Callback cb) {
@@ -425,6 +562,84 @@ public final class SensorController {
                 notifyTile(c);
             }
         });
+    }
+
+    private static boolean bridgeSupportsSelective(Context c) {
+        try {
+            return "CAPS SELECTIVE_V1".equals(
+                    LocalShellClient.request(c, "CAPS", 800));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean ensureSelectiveBridge(Context c) {
+        if (bridgeSupportsSelective(c)) return true;
+
+        // If the old bridge is still healthy, keep it running until a fresh ADB
+        // session has actually connected. This preserves existing protection if
+        // Wi-Fi is unavailable during an app update.
+        boolean oldBridgeHealthy = false;
+        try {
+            oldBridgeHealthy = LocalShellClient.ping(c)
+                    && functionalBridgeCheck(c).valid;
+        } catch (Throwable ignored) {
+        }
+
+        if (!oldBridgeHealthy) {
+            return recoverBridge(c) && bridgeSupportsSelective(c);
+        }
+
+        AbsAdbConnectionManager manager = null;
+        boolean adbConnected = false;
+        try {
+            recordDebugBaseline(c);
+            enableDebug(c);
+
+            manager = AdbConnectionManager.freshInstance(c);
+            manager.setThrowOnUnauthorised(true);
+            liveManager = manager;
+            connectExistingPairingAfterWarmup(c, manager);
+            if (!manager.isConnected()) return false;
+
+            adbConnected = true;
+            startLocalBridgeViaManager(c, manager, true);
+            if (!bridgeSupportsSelective(c)) {
+                throw new Exception("Updated bridge capability check failed");
+            }
+
+            PrivacyState state = localState(c);
+            if (!state.valid) {
+                throw new Exception("Updated bridge returned invalid state");
+            }
+            saveStateSilent(c, state.microphoneBlocked, state.cameraBlocked,
+                    isPairingVerified(c));
+            markBridgeReady(c);
+            return true;
+        } catch (AdbAuthenticationFailedException | AdbPairingRequiredException e) {
+            if (LocalShellClient.ping(c)) {
+                markBridgeReady(c);
+            } else {
+                markRepair(c, ISSUE_PAIRING_REVOKED);
+            }
+            return false;
+        } catch (Throwable e) {
+            if (LocalShellClient.ping(c)) {
+                // The v1.0 bridge is still healthy. Keep core protection usable
+                // and report only that selective mode needs a service refresh.
+                markBridgeReady(c);
+            } else if (adbConnected) {
+                markRepair(c, ISSUE_SERVICE_START_FAILED);
+            }
+            return false;
+        } finally {
+            if (manager != null) {
+                try { manager.disconnect(); } catch (Throwable ignored) {}
+            }
+            AdbConnectionManager.resetInstance();
+            liveManager = null;
+            restoreDebugBaseline(c);
+        }
     }
 
     private static boolean ensureBridge(Context c) {
@@ -647,8 +862,16 @@ public final class SensorController {
 
     public static void startLocalBridgeViaManager(Context c,
                                                    AbsAdbConnectionManager manager) throws Exception {
+        startLocalBridgeViaManager(c, manager, false);
+    }
+
+    private static void startLocalBridgeViaManager(Context c,
+                                                   AbsAdbConnectionManager manager,
+                                                   boolean requireCurrentProtocol) throws Exception {
         if (LocalShellClient.ping(c) && verifyLocalBridgeFunctional(c)) {
-            return;
+            if (!requireCurrentProtocol || bridgeSupportsSelective(c)) {
+                return;
+            }
         }
 
         String pkg = c.getPackageName();
@@ -732,6 +955,10 @@ public final class SensorController {
                 .putInt(BASE_WIFI, wifi)
                 .putBoolean(DEBUG_SESSION_ACTIVE, true)
                 .commit();
+    }
+
+    public static boolean hasTemporaryDebugSettings(Context c) {
+        return prefs(c.getApplicationContext()).getBoolean(DEBUG_SESSION_ACTIVE, false);
     }
 
     public static boolean prepareDebugForPairing(Context c) {
@@ -824,6 +1051,7 @@ public final class SensorController {
                     .putString(CONNECTION_ISSUE, ISSUE_PAIRING_REVOKED)
                     .apply();
         }
+        notifyTile(c);
     }
 
     private static void probePairingIfPossible(Context c) {
@@ -873,6 +1101,8 @@ public final class SensorController {
                 .putString(CONNECTION_ISSUE, issue)
                 .putString(LAST_MESSAGE, text(c, issueMessageRes(issue)))
                 .apply();
+        RecoveryDiagnostics.event("bridge_repair_required issue=" + issue);
+        notifyTile(c);
     }
 
     private static int issueMessageRes(String issue) {
@@ -989,10 +1219,10 @@ public final class SensorController {
     }
 
     private static void notifyTile(Context c) {
-        try {
-            TileService.requestListeningState(
-                    c, new ComponentName(c, SensorTileService.class));
-        } catch (Throwable ignored) {}
+        // Standard TileService lifecycle: SystemUI binds on shade
+        // visibility. While it is listening, SharedPreferences observers
+        // redraw state on mutation and health completion. Active-mode
+        // requestListeningState would be ignored by Android here.
     }
 
     private static String runAdbShell(AbsAdbConnectionManager manager,

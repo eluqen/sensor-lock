@@ -79,6 +79,35 @@ public final class ShellBridge {
                 return;
             }
 
+            if ("CAPS".equals(command)) {
+                writer.println("CAPS SELECTIVE_V1");
+                return;
+            }
+
+            if ("BLOCK_CAMERA".equals(command)) {
+                setOne("camera", true);
+                writer.println(readState());
+                return;
+            }
+
+            if ("ALLOW_CAMERA".equals(command)) {
+                setOne("camera", false);
+                writer.println(readState());
+                return;
+            }
+
+            if ("BLOCK_MICROPHONE".equals(command)) {
+                setOne("microphone", true);
+                writer.println(readState());
+                return;
+            }
+
+            if ("ALLOW_MICROPHONE".equals(command)) {
+                setOne("microphone", false);
+                writer.println(readState());
+                return;
+            }
+
             if ("BLOCK".equals(command)) {
                 setPrivacy(true);
                 writer.println(readState());

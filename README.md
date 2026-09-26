@@ -6,14 +6,14 @@ It can block or allow both sensors, verify their real state, show a Mixed state 
 
 ## Download
 
-Signed public APK: releases/SensorLock-1.0.0.apk
+Signed public APK: releases/SensorLock-1.1.0.apk (previous version: releases/SensorLock-1.0.0.apk)
 
 - Package: com.eluqen.sensorlock
-- Version: 1.0.0
-- Version code: 1
+- Version: 1.1.0
+- Version code: 2
 - Minimum Android: Android 11 / API 30
 - Target SDK: 35
-- SHA-256: 5e41ae0b572f009d00016a00999475951d8c46c14735788b7dcf8b34a17e98b4
+- SHA-256: c7aee394b03f88873345fb7ae957c907327d58dc3eccfffb5a0936315c7a1fc3
 
 ELUQEN signing certificate SHA-256:
 AC:22:3F:F9:0D:1F:DA:E6:F5:5F:0D:7C:2C:C6:EE:34:7C:20:E1:61:EE:D4:2A:24:A0:38:84:A6:3D:CF:20:34
@@ -50,15 +50,14 @@ After successful setup, normal protection commands run through a local service o
 7. Enable Wireless debugging if needed.
 8. Tap Pair device with pairing code and keep that screen open.
 9. Open the Sensor Lock notification.
-10. Tap Find pairing port.
-11. Enter the 6-digit Android pairing code.
-12. Wait for setup to finish. The pairing notification disappears automatically when the connection is ready.
+10. Enter and submit the 6-digit pairing code in the Sensor Lock notification; the app discovers the local pairing port automatically.
+11. Wait for setup to finish. The pairing notification disappears automatically when the connection is ready.
 
 ## Normal use
 
 Once connected:
-- Protect camera & microphone blocks both sensors.
-- Turn protection off makes both available again.
+- Select Camera, Microphone, or both on the main screen (one sensor must remain selected).
+- Protect or Allow applies to the selected sensors. The Quick Settings tile has its own independent sensor target.
 - Check protection verifies the real current state.
 - The Quick Settings tile performs the same control without opening the app.
 - Camera and microphone are tracked separately.

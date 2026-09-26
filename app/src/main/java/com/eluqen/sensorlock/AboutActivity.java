@@ -59,6 +59,7 @@ public class AboutActivity extends Activity {
         addSection(root, R.string.about_limits_title, R.string.about_limits_body);
         addSection(root, R.string.about_source_title, R.string.about_source_body);
         addSection(root, R.string.about_company_title, R.string.about_company_body);
+        addSection(root, R.string.version_changes_title, R.string.version_changes_body);
 
         TextView links = text(getString(R.string.about_links_title), 18, true, R.color.text_primary);
         links.setPadding(dp(4), dp(22), dp(4), dp(2));
@@ -226,7 +227,7 @@ public class AboutActivity extends Activity {
         try {
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Throwable ignored) {
-            return "1.0.0";
+            return "1.1.0";
         }
     }
 

@@ -1,6 +1,5 @@
 package com.eluqen.sensorlock;
 
-import android.Manifest;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
@@ -18,11 +17,12 @@ import io.github.muntashirakon.adb.android.AdbMdns;
 import io.github.muntashirakon.adb.android.AndroidUtils;
 
 public class PairingReceiver extends BroadcastReceiver {
-    static final String DISCOVER="com.eluqen.sensorlock.DISCOVER";
+    // The user submits the six-digit Android code once; the port is discovered
+    // immediately afterwards in memory, never from a potentially stale preference.
     static final String PAIR="com.eluqen.sensorlock.PAIR";
     static final String CODE="pair_code", CH="pairing_v5";
     static final int ID=5051;
-    static final String PREFS="pairing_state", HOST="host", PORT="port";
+    private static final AtomicBoolean PAIR_IN_FLIGHT = new AtomicBoolean(false);
     static final String SECURE_PERMISSION="android.permission.WRITE_SECURE_SETTINGS";
 
     @Override public void onReceive(final Context c, Intent i) {
@@ -31,12 +31,6 @@ public class PairingReceiver extends BroadcastReceiver {
             return;
         }
 
-        if (DISCOVER.equals(i.getAction())) {
-            final PendingResult pr=goAsync();
-            progress(c,text(c,R.string.pair_finding_title),text(c,R.string.pair_keep_open));
-            new Thread(new Runnable(){ public void run(){ discover(c,pr); }}).start();
-            return;
-        }
         if (!PAIR.equals(i.getAction())) return;
 
         Bundle b=RemoteInput.getResultsFromIntent(i);
@@ -47,20 +41,26 @@ public class PairingReceiver extends BroadcastReceiver {
             return;
         }
 
-        SharedPreferences sp=c.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
-        final int port=sp.getInt(PORT,-1);
-        if (port<1) {
-            ready(c,text(c,R.string.pair_port_missing_title),text(c,R.string.pair_port_missing_text));
-            return;
-        }
+        // Debounce duplicate notification submissions; a second pairing attempt
+        // must never race the first one or consume a one-time code unexpectedly.
+        if (!PAIR_IN_FLIGHT.compareAndSet(false, true)) return;
 
         final PendingResult pr=goAsync();
-        progress(c,text(c,R.string.pair_pairing_title),text(c,R.string.pair_keep_open));
+        progress(c,text(c,R.string.pair_finding_title),text(c,R.string.pair_keep_open));
 
         new Thread(new Runnable(){ public void run(){
             AbsAdbConnectionManager m=null;
             boolean authenticated=false;
+            boolean discoverySucceeded=false;
             try {
+                final int port=discoverPairingPort(c);
+                discoverySucceeded=true;
+                if (alreadyConnected(c)) {
+                    clearPairingNotifications(c);
+                    return;
+                }
+
+                progress(c,text(c,R.string.pair_pairing_title),text(c,R.string.pair_keep_open));
                 m=AdbConnectionManager.getInstance(c);
                 String localHost=AndroidUtils.getHostIpAddress(c);
                 if (!m.pair(localHost,port,code)) {
@@ -126,55 +126,43 @@ public class PairingReceiver extends BroadcastReceiver {
                 if (authenticated) {
                     cancelPending(c);
                     SensorController.bridgeStartFailedAfterPairing(c);
+                } else if (!discoverySucceeded) {
+                    pairInput(c,text(c,R.string.pair_discovery_failed),
+                            text(c,R.string.pair_auto_discovery_retry));
                 } else {
-                    pairInput(c,text(c,R.string.pair_failed_title),text(c,R.string.operation_failed));
+                    pairInput(c,text(c,R.string.pair_failed_title),
+                            text(c,R.string.pair_auto_pair_retry));
                 }
             } finally {
+                PAIR_IN_FLIGHT.set(false);
                 pr.finish();
             }
         }}).start();
     }
 
-    static void discover(final Context c, PendingResult pr) {
+    private static int discoverPairingPort(Context c) throws Exception {
         AdbMdns mdns=null;
         try {
-            final AtomicReference<InetAddress> host=new AtomicReference<InetAddress>();
             final AtomicInteger port=new AtomicInteger(-1);
             final CountDownLatch latch=new CountDownLatch(1);
 
             mdns=new AdbMdns(c.getApplicationContext(),AdbMdns.SERVICE_TYPE_TLS_PAIRING,
                 new AdbMdns.OnAdbDaemonDiscoveredListener() {
-                    @Override public void onPortChanged(InetAddress a,int p) {
-                        if(a!=null && p>0){ host.set(a); port.set(p); latch.countDown(); }
+                    @Override public void onPortChanged(InetAddress address,int discoveredPort) {
+                        if(address!=null && discoveredPort>0) {
+                            port.set(discoveredPort);
+                            latch.countDown();
+                        }
                     }
                 });
 
             mdns.start();
             if(!latch.await(20,TimeUnit.SECONDS) || port.get()<1) {
-                throw new Exception("No pairing port found. Keep 'Pair device with pairing code' open and try FIND PAIRING PORT again.");
+                throw new Exception("Android local ADB pairing port was not discovered");
             }
-
-            if (alreadyConnected(c)) {
-                cancelPending(c);
-                return;
-            }
-
-            c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
-                    .putString(HOST,host.get()==null?null:host.get().getHostAddress())
-                    .putInt(PORT,port.get())
-                    .apply();
-
-            pairInput(c,text(c,R.string.pair_found_title),
-                    text(c,R.string.pair_found_text));
-        } catch(Throwable t) {
-            if (alreadyConnected(c)) {
-                cancelPending(c);
-            } else {
-                ready(c,text(c,R.string.pair_discovery_failed),text(c,R.string.pair_port_missing_text));
-            }
+            return port.get();
         } finally {
             if(mdns!=null) try{ mdns.stop(); }catch(Throwable ignored){}
-            pr.finish();
         }
     }
 
@@ -185,8 +173,7 @@ public class PairingReceiver extends BroadcastReceiver {
         }
 
         cancelPairingNotifications(c);
-        c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply();
-        ready(c,text(c,R.string.pair_start_title),
+        pairInput(c,text(c,R.string.pair_start_title),
                 text(c,R.string.pair_start_text));
         return true;
     }
@@ -222,24 +209,6 @@ public class PairingReceiver extends BroadcastReceiver {
             f|=mutable?PendingIntent.FLAG_MUTABLE:PendingIntent.FLAG_IMMUTABLE;
         }
         return PendingIntent.getBroadcast(c,req,i,f);
-    }
-
-    static void ready(Context c,String title,String text){
-        channel(c);
-        Notification.Action a=new Notification.Action.Builder(
-                android.R.drawable.ic_menu_search,
-                text(c,R.string.pair_find_port),
-                pi(c,DISCOVER,11,false)).build();
-
-        get(c).notify(ID,new Notification.Builder(c,CH)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setStyle(new Notification.BigTextStyle().bigText(text))
-                .setOngoing(true)
-                .setOnlyAlertOnce(false)
-                .addAction(a)
-                .build());
     }
 
     static void pairInput(Context c,String title,String text){

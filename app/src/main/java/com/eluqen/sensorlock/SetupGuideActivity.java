@@ -14,6 +14,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 public class SetupGuideActivity extends Activity {
+    private Button startButton;
+    private TextView connectedStatus;
+
     @Override
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(LanguageManager.wrap(newBase));
@@ -79,37 +82,58 @@ public class SetupGuideActivity extends Activity {
                 getString(R.string.guide_step4_body),
                 new String[]{
                         getString(R.string.guide_mock_notification),
-                        getString(R.string.guide_mock_find_port),
-                        getString(R.string.pair_input_label)},
+                        getString(R.string.pair_input_label),
+                        getString(R.string.pair_finding_title)},
                 1));
 
         TextView tip = text("✓  " + getString(R.string.guide_tip), 14, true, R.color.success);
         tip.setPadding(dp(6), dp(14), dp(6), dp(8));
         root.addView(tip);
 
-        Button startButton = primaryButton(getString(R.string.guide_start_pairing));
-        if (PairingReceiver.alreadyConnected(this)) {
-            TextView connected = text(
-                    "✓  " + getString(R.string.pair_not_needed_body),
-                    14, true, R.color.success);
-            connected.setPadding(dp(6), dp(10), dp(6), dp(2));
-            root.addView(connected);
+        connectedStatus = text(
+                "✓  " + getString(R.string.pair_not_needed_body),
+                14, true, R.color.success);
+        connectedStatus.setPadding(dp(6), dp(10), dp(6), dp(2));
+        connectedStatus.setVisibility(View.GONE);
+        root.addView(connectedStatus);
 
-            startButton.setText(getString(R.string.pair_not_needed_title));
-            startButton.setEnabled(false);
-            startButton.setAlpha(0.55f);
-        } else {
-            startButton.setOnClickListener(v -> {
-                Intent intent = new Intent(this, MainActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        .putExtra("begin_pairing", true);
-                startActivity(intent);
-                finish();
-            });
-        }
+        startButton = primaryButton(getString(R.string.guide_start_pairing));
+        startButton.setOnClickListener(v -> {
+            // The initial onCreate status is not authoritative: bridge recovery
+            // can finish while the guide stays open. Recheck on every tap.
+            if (PairingReceiver.alreadyConnected(this)) {
+                refreshConnectionAction();
+                return;
+            }
+            Intent intent = new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra("begin_pairing", true);
+            startActivity(intent);
+            finish();
+        });
         root.addView(startButton);
 
         setContentView(scroll);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshConnectionAction();
+    }
+
+    private void refreshConnectionAction() {
+        if (startButton == null || connectedStatus == null) return;
+
+        boolean connected = PairingReceiver.alreadyConnected(this);
+        connectedStatus.setVisibility(connected ? View.VISIBLE : View.GONE);
+        startButton.setText(getString(connected
+                ? R.string.pair_not_needed_title
+                : SensorController.isPairingVerified(this)
+                  ? R.string.guide_check_connection
+                  : R.string.guide_start_pairing));
+        startButton.setEnabled(!connected);
+        startButton.setAlpha(connected ? 0.55f : 1f);
     }
 
     private View stepCard(String title, String body, String[] rows, int highlightIndex) {
