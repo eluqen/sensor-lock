@@ -18,6 +18,7 @@ public class BootReceiver extends BroadcastReceiver {
         boolean boot = Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction());
         boolean updated = Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction());
         if (!boot && !updated) return;
+        RecoveryDiagnostics.event(boot ? "boot_recovery_received" : "package_update_recovery_received");
 
         // APK replacement can stop an app_process bridge even though the
         // pairing key and sensor-privacy state are still valid. Do not rotate

@@ -79,8 +79,28 @@ public class AdbConnectionManager extends AbsAdbConnectionManager {
     private PrivateKey mPrivateKey;
     private Certificate mCertificate;
 
+    /** Separate read-only probe: never replaces or disconnects the operational singleton. */
+    static AbsAdbConnectionManager createValidationInstance(@NonNull Context context)
+            throws Exception {
+        return new AdbConnectionManager(context.getApplicationContext(), true);
+    }
+
     private AdbConnectionManager(@NonNull Context context) throws Exception {
+        this(context, false);
+    }
+
+    private AdbConnectionManager(@NonNull Context context, boolean existingCredentialsOnly)
+            throws Exception {
         setApi(Build.VERSION.SDK_INT);
+        if (existingCredentialsOnly) {
+            // Read only: never delete, replace or regenerate the installed pairing identity.
+            mPrivateKey = readPrivateKeyFromFile(context);
+            mCertificate = readCertificateFromFile(context);
+            if (mPrivateKey == null || mCertificate == null) {
+                throw new IllegalStateException("Existing ADB pairing identity not available");
+            }
+            return;
+        }
         try {
             mPrivateKey = readPrivateKeyFromFile(context);
             mCertificate = readCertificateFromFile(context);

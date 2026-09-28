@@ -83,8 +83,19 @@ public class SetupGuideActivity extends Activity {
                 new String[]{
                         getString(R.string.guide_mock_notification),
                         getString(R.string.pair_input_label),
-                        getString(R.string.pair_finding_title)},
+                        getString(R.string.guide_mock_connected)},
                 1));
+
+        root.addView(stepCard(getString(R.string.guide_use_title),
+                getString(R.string.guide_use_body), new String[0], -1));
+        root.addView(stepCard(getString(R.string.guide_tile_title),
+                getString(R.string.guide_tile_body), new String[0], -1));
+        root.addView(stepCard(getString(R.string.guide_recovery_title),
+                getString(R.string.guide_recovery_body), new String[0], -1));
+        root.addView(stepCard(getString(R.string.guide_troubleshoot_title),
+                getString(R.string.guide_troubleshoot_body), new String[0], -1));
+        root.addView(stepCard(getString(R.string.guide_notification_title),
+                getString(R.string.guide_notification_body), new String[0], -1));
 
         TextView tip = text("✓  " + getString(R.string.guide_tip), 14, true, R.color.success);
         tip.setPadding(dp(6), dp(14), dp(6), dp(8));
@@ -157,6 +168,7 @@ public class SetupGuideActivity extends Activity {
         description.setPadding(0, dp(6), 0, dp(12));
         card.addView(description);
 
+        if (rows.length > 0) {
         LinearLayout screen = new LinearLayout(this);
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -182,6 +194,7 @@ public class SetupGuideActivity extends Activity {
         }
 
         card.addView(screen);
+        }
         return card;
     }
 

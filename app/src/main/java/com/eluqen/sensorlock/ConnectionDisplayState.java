@@ -13,4 +13,10 @@ final class ConnectionDisplayState {
                               boolean repairRequired) {
         return hasPermission && bridgeReady && !repairRequired;
     }
+
+    /** Sensor state is not current/verified while repair is required, even if a stale bridge exists. */
+    static boolean isSensorStateVerified(boolean hasPermission, boolean bridgeReady,
+                                         boolean repairRequired, boolean pairingRevoked) {
+        return hasPermission && bridgeReady && !repairRequired;
+    }
 }

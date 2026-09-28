@@ -48,6 +48,8 @@ public class AboutActivity extends Activity {
         root.addView(text(getString(R.string.about_title), 28, true, R.color.text_primary));
 
         addSection(root, R.string.about_what_title, R.string.about_what_body);
+        addSection(root, R.string.about_controls_title, R.string.about_controls_body);
+        addSection(root, R.string.about_quick_title, R.string.about_quick_body);
         addSection(root, R.string.about_why_title, R.string.about_why_body);
         addSection(root, R.string.about_how_title, R.string.about_how_body);
         addSection(root, R.string.about_mixed_title, R.string.about_mixed_body);
@@ -55,6 +57,7 @@ public class AboutActivity extends Activity {
         addSection(root, R.string.about_compat_title, R.string.about_compat_body);
         addSection(root, R.string.about_permissions_title, R.string.about_permissions_body);
         addSection(root, R.string.about_reboot_title, R.string.about_reboot_body);
+        addSection(root, R.string.about_troubleshoot_title, R.string.about_troubleshoot_body);
         addSection(root, R.string.about_privacy_title, R.string.about_privacy_body);
         addSection(root, R.string.about_limits_title, R.string.about_limits_body);
         addSection(root, R.string.about_source_title, R.string.about_source_body);
@@ -227,7 +230,7 @@ public class AboutActivity extends Activity {
         try {
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Throwable ignored) {
-            return "1.1.0";
+            return "1.2.0";
         }
     }
 

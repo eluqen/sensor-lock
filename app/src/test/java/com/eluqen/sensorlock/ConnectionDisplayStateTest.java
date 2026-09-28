@@ -21,6 +21,11 @@ public class ConnectionDisplayStateTest {
         assertFalse(ConnectionDisplayState.isReconnecting(false, false, true));
         assertFalse(ConnectionDisplayState.isVerified(true, false, true));
     }
+    @Test public void revokedPairingIsNotShownAsCurrentVerifiedState() {
+        assertFalse(ConnectionDisplayState.isSensorStateVerified(true, true, true, true));
+        assertFalse(ConnectionDisplayState.isSensorStateVerified(true, false, true, true));
+        assertFalse(ConnectionDisplayState.isSensorStateVerified(true, true, true, false));
+    }
     @Test public void lackOfPermissionNeverShowsVerified() {
         assertFalse(ConnectionDisplayState.isVerified(false, true, false));
     }

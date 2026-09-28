@@ -9,9 +9,8 @@
 5. In Android Wireless debugging, enable Wireless debugging if needed.
 6. Open Pair device with pairing code.
 7. Keep the pairing-code screen open.
-8. In the Sensor Lock notification, find the pairing port.
-9. Enter the six-digit Android pairing code.
-10. Wait for setup to finish.
+8. Enter the six-digit Android pairing code in the Sensor Lock notification.
+9. Wait for setup to finish.
 
 ## Already connected
 

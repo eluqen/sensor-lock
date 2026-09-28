@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ConnectionMonitor {
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
     private static ScheduledExecutorService scheduler;
+    private static volatile Boolean lastWifi;
 
     private ConnectionMonitor() {}
 
@@ -39,20 +40,30 @@ public final class ConnectionMonitor {
                 // Do not stop retrying merely because an early post-boot
                 // attempt looked like revoked pairing. Only repeated complete
                 // recovery failures are allowed to confirm that condition.
-                if (!SensorController.isBridgeReadyCached(app) && !hasWifiTransport(app)) {
+                boolean wifi = hasWifiTransport(app);
+                if (lastWifi == null || lastWifi.booleanValue() != wifi) {
+                    lastWifi = wifi;
+                    RecoveryDiagnostics.event(wifi
+                            ? "wifi_transport_available" : "wifi_transport_unavailable");
+                }
+                if (!SensorController.isBridgeReadyCached(app) && !wifi) {
                     return;
                 }
 
                 SensorController.refreshConnectionHealthBackground(
                         app,
-                        result -> SensorController.noteBackgroundRecoveryResult(
-                                app, result.success));
+                        result -> {
+                            SensorController.noteBackgroundRecoveryResult(app, result.success);
+                            // Auth check runs on its own executor only AFTER functional bridge
+                            // verification; it must never delay the fast boot recovery worker.
+                            if (result.success) PairingValidator.validateAsync(app, false, null);
+                        });
             } catch (Throwable ignored) {
             }
         }, 2, 10, TimeUnit.SECONDS);
     }
 
-    private static boolean hasWifiTransport(Context context) {
+    static boolean hasWifiTransport(Context context) {
         ConnectivityManager cm =
                 (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return false;

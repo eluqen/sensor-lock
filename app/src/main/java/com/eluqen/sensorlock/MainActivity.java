@@ -24,8 +24,6 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
-import android.widget.Switch;
-import android.widget.Toast;
 import android.widget.TextView;
 import java.util.concurrent.Executor;
 
@@ -33,16 +31,11 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFICATIONS = 50;
 
     private TextView overallStatus;
-    private TextView actualGlobalStatus;
-    private TextView mainScope;
-    private Switch mainCameraSwitch;
-    private Switch mainMicrophoneSwitch;
-    private TextView cameraStatus;
-    private TextView microphoneStatus;
+    private Button cameraControlButton;
+    private Button microphoneControlButton;
     private TextView compatibilityTitle;
     private TextView compatibilityBody;
     private TextView message;
-    private Button primaryButton;
     private Button checkButton;
     private Button quickButton;
     private Button tileModeButton;
@@ -52,6 +45,7 @@ public class MainActivity extends Activity {
     private TextView connectionBody;
     private Button reconnectButton;
     private LinearLayout quickCard;
+    private boolean repairCheckInProgress;
     private boolean pendingSetup;
     private boolean setupCheckInProgress;
 
@@ -120,54 +114,39 @@ public class MainActivity extends Activity {
         addCard(root, compatibilityCard, 18);
 
         LinearLayout protectionCard = card();
+        TextView controlTitle = label(getString(R.string.main_controls_header),
+                18, true, R.color.text_primary);
+        controlTitle.setGravity(Gravity.CENTER);
+        protectionCard.addView(controlTitle);
+        TextView controlHint = label(getString(R.string.main_controls_subheading),
+                13, false, R.color.text_secondary);
+        controlHint.setGravity(Gravity.CENTER);
+        controlHint.setPadding(0, dp(5), 0, dp(12));
+        protectionCard.addView(controlHint);
 
-        // A compact, non-dropdown main-action selector in the top-right of
-        // the protection card. It is independent of Quick Settings selection.
-        LinearLayout mainHeader = new LinearLayout(this);
-        mainHeader.setOrientation(LinearLayout.HORIZONTAL);
-        // Keep the selector physically on the right in EN/FA/FR; text inside
-        // each group still follows the selected language's text direction.
-        mainHeader.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        mainHeader.setGravity(Gravity.TOP);
-        LinearLayout mainHeaderText = new LinearLayout(this);
-        mainHeaderText.setOrientation(LinearLayout.VERTICAL);
-        mainHeaderText.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE);
-        mainHeaderText.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-        mainHeaderText.addView(label(getString(R.string.main_controls_header),
-                14, true, R.color.text_primary));
-        mainScope = label(getString(R.string.main_controls_subheading),
-                12, false, R.color.text_secondary);
-        mainScope.setPadding(0, dp(5), dp(5), 0);
-        mainHeaderText.addView(mainScope);
-        mainHeader.addView(mainHeaderText);
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+        cameraControlButton = sensorControlButton(R.string.camera,
+                TilePreferences.MODE_CAMERA);
+        microphoneControlButton = sensorControlButton(R.string.microphone,
+                TilePreferences.MODE_MICROPHONE);
+        // A real inter-button spacer works in both LTR and RTL. Physical left/right
+        // margins moved to the outer edges in Persian, making the buttons touch.
+        LinearLayout.LayoutParams cameraLp = new LinearLayout.LayoutParams(0, dp(86), 1f);
+        controls.addView(cameraControlButton, cameraLp);
+        View sensorGap = new View(this);
+        controls.addView(sensorGap, new LinearLayout.LayoutParams(dp(10), dp(1)));
+        LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(0, dp(86), 1f);
+        controls.addView(microphoneControlButton, micLp);
+        protectionCard.addView(controls);
 
-        LinearLayout selector = new LinearLayout(this);
-        selector.setOrientation(LinearLayout.VERTICAL);
-        selector.setGravity(Gravity.END);
-        mainCameraSwitch = mainSensorSwitch(R.string.camera, TilePreferences.MODE_CAMERA);
-        mainMicrophoneSwitch = mainSensorSwitch(R.string.microphone, TilePreferences.MODE_MICROPHONE);
-        selector.addView(mainCameraSwitch);
-        selector.addView(mainMicrophoneSwitch);
-        mainHeader.addView(selector);
-        protectionCard.addView(mainHeader);
-
-        overallStatus = label(getString(R.string.status_unknown), 24, true, R.color.text_primary);
-        overallStatus.setPadding(0, dp(10), 0, dp(8));
+        overallStatus = label(getString(R.string.status_unknown),
+                21, true, R.color.text_primary);
+        overallStatus.setGravity(Gravity.CENTER);
+        overallStatus.setPadding(0, dp(14), 0, dp(6));
         protectionCard.addView(overallStatus);
-
-        cameraStatus = statusRow(getString(R.string.camera));
-        protectionCard.addView(cameraStatus);
-        microphoneStatus = statusRow(getString(R.string.microphone));
-        microphoneStatus.setPadding(0, dp(10), 0, 0);
-        protectionCard.addView(microphoneStatus);
-        actualGlobalStatus = label("", 12, false, R.color.text_secondary);
-        actualGlobalStatus.setPadding(0, dp(9), 0, 0);
-        protectionCard.addView(actualGlobalStatus);
         addCard(root, protectionCard, 14);
-
-        primaryButton = primaryButton(getString(R.string.protect_action));
-        primaryButton.setOnClickListener(v -> toggleProtection());
-        root.addView(primaryButton);
 
         checkButton = secondaryButton(getString(R.string.check_protection));
         checkButton.setOnClickListener(v -> verifyProtection());
@@ -250,15 +229,13 @@ public class MainActivity extends Activity {
         root.addView(support);
 
         TextView footer = label(
-                getString(R.string.version_format, versionName()) + "  •  " + getString(R.string.publisher_name),
+                getString(R.string.version_format, versionName()) + "  •  "
+                        + getString(R.string.publisher_name),
                 12, false, R.color.text_secondary);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(0, dp(8), 0, 0);
         root.addView(footer);
 
-        // Initialize selector state once, before this view is first drawn.
-        // Background health/operation UI refreshes must never re-bind switches.
-        syncMainSelectionUi();
         setContentView(scroll);
         refreshUi();
         handleIntent(getIntent());
@@ -313,75 +290,75 @@ public class MainActivity extends Activity {
         super.onStop();
     }
 
-    private Switch mainSensorSwitch(int labelRes, int sensor) {
-        Switch control = new Switch(this);
-        control.setText(getString(labelRes));
-        control.setTextSize(13);
-        control.setTextColor(getColor(R.color.text_primary));
-        control.setGravity(Gravity.CENTER_VERTICAL);
-        control.setMinHeight(dp(48));
-        control.setPadding(dp(2), 0, 0, 0);
-        control.setOnClickListener(v -> {
-            int previous = MainControlPreferences.getMode(this);
-            boolean requested = control.isChecked();
-            int next = MainControlPreferences.nextMode(previous, sensor, requested);
-            MainControlPreferences.setMode(this, next);
-            if (previous == sensor && !requested) {
-                int other = sensor == TilePreferences.MODE_CAMERA
-                        ? R.string.microphone : R.string.camera;
-                Toast.makeText(this, getString(R.string.main_last_selection_switched,
-                        getString(other)), Toast.LENGTH_SHORT).show();
-            }
-            // Only a genuine user selection change can re-bind the switches.
-            // A running action already captured its target mode at tap time;
-            // changing this preference only affects the NEXT main action.
-            syncMainSelectionUi();
-            refreshUi();
-        });
-        return control;
+    private Button sensorControlButton(int labelRes, int sensorMode) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setTextSize(16);
+        button.setMinHeight(dp(76));
+        button.setOnClickListener(v -> toggleSensor(sensorMode));
+        return button;
     }
 
-    private void syncMainSelectionUi() {
-        int mode = MainControlPreferences.getMode(this);
-        boolean cameraSelected = (mode & TilePreferences.MODE_CAMERA) != 0;
-        boolean microphoneSelected = (mode & TilePreferences.MODE_MICROPHONE) != 0;
-        // setChecked on an unchanged Switch triggers redundant drawable/state
-        // work and can make it look as though pressing Protect reset selection.
-        if (mainCameraSwitch.isChecked() != cameraSelected) {
-            mainCameraSwitch.setChecked(cameraSelected);
+    private void updateSensorControl(Button button, int nameRes, boolean blocked,
+                                     boolean known, boolean verified, boolean enabled) {
+        String state = !known ? getString(R.string.status_unknown)
+                : verified ? getString(blocked ? R.string.blocked : R.string.available)
+                : getString(R.string.sensor_last_known,
+                        getString(blocked ? R.string.blocked : R.string.available));
+        String name = getString(nameRes);
+        button.setText(getString(R.string.sensor_control_label, name, state));
+        button.setContentDescription(getString(R.string.sensor_control_accessibility, name,
+                state));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(15));
+        if (verified && blocked) {
+            bg.setColor(getColor(R.color.accent));
+            button.setTextColor(Color.WHITE);
+        } else {
+            bg.setColor(getColor(R.color.surface));
+            bg.setStroke(dp(1), getColor(R.color.divider));
+            button.setTextColor(getColor(R.color.text_primary));
         }
-        if (mainMicrophoneSwitch.isChecked() != microphoneSelected) {
-            mainMicrophoneSwitch.setChecked(microphoneSelected);
-        }
-        mainScope.setText(getString(mode == TilePreferences.MODE_BOTH
-                ? R.string.main_controls_subheading
-                : R.string.main_controls_subheading_single));
-        boolean supported = DeviceCompatibility.isSupported(this);
-        mainCameraSwitch.setEnabled(supported);
-        mainMicrophoneSwitch.setEnabled(supported);
+        button.setBackground(bg);
+        button.setEnabled(enabled);
+        button.setAlpha(enabled ? 1f : .55f);
     }
 
-    private String actualOverallText(boolean cameraBlocked, boolean microphoneBlocked) {
-        if (cameraBlocked && microphoneBlocked) return getString(R.string.status_protected);
-        if (!cameraBlocked && !microphoneBlocked) return getString(R.string.status_off);
-        return getString(R.string.mixed);
+    private void refreshSensorControls(boolean ready, boolean busy, boolean known,
+                                       boolean verified) {
+        boolean enabled = ready && !busy && DeviceCompatibility.isSupported(this);
+        updateSensorControl(cameraControlButton, R.string.camera,
+                SensorController.getCachedCameraBlocked(this), known, verified, enabled);
+        updateSensorControl(microphoneControlButton, R.string.microphone,
+                SensorController.getCachedMicrophoneBlocked(this), known, verified, enabled);
+    }
+
+    private int protectionSummaryRes(boolean cameraBlocked, boolean microphoneBlocked) {
+        switch (ProtectionSummary.from(cameraBlocked, microphoneBlocked)) {
+            case FULL: return R.string.summary_fully_protected;
+            case CAMERA_ONLY: return R.string.summary_camera_protected;
+            case MICROPHONE_ONLY: return R.string.summary_microphone_protected;
+            default: return R.string.status_off;
+        }
+    }
+
+    private void showInlineError(String value) {
+        message.setText(value == null ? "" : value);
+        message.setVisibility(value == null || value.isEmpty()
+                ? View.GONE : View.VISIBLE);
     }
 
     private void refreshUi() {
-        // Read the selected preference to derive labels and command state.
-        // Do NOT write to or redraw the sensor-selection switches here.
         boolean compatible = DeviceCompatibility.isSupported(this);
         if (!compatible) {
             compatibilityCard.setVisibility(View.VISIBLE);
             compatibilityTitle.setText(getString(R.string.unsupported_title));
-            compatibilityBody.setText(
-                    getString(R.string.unsupported_android_body, DeviceCompatibility.androidVersion()));
+            compatibilityBody.setText(getString(R.string.unsupported_android_body,
+                    DeviceCompatibility.androidVersion()));
             overallStatus.setText(getString(R.string.unsupported_title));
             overallStatus.setTextColor(getColor(R.color.warning));
-            cameraStatus.setText(getString(R.string.camera) + "  —");
-            microphoneStatus.setText(getString(R.string.microphone) + "  —");
-            actualGlobalStatus.setText("");
-            primaryButton.setEnabled(false);
+            refreshSensorControls(false, false, false, false);
             checkButton.setEnabled(false);
             quickButton.setEnabled(false);
             tileModeButton.setEnabled(false);
@@ -391,7 +368,6 @@ public class MainActivity extends Activity {
         }
 
         compatibilityCard.setVisibility(View.GONE);
-
         boolean tileAdded = SensorTileService.isTileAdded(this);
         quickButton.setText(getString(tileAdded ? R.string.quick_added : R.string.quick_button));
         quickButton.setEnabled(!tileAdded);
@@ -401,125 +377,76 @@ public class MainActivity extends Activity {
         boolean ready = hasSecurePermission();
         boolean busy = SensorController.isToggleInFlight();
         setupCard.setVisibility(ready ? View.GONE : View.VISIBLE);
-        primaryButton.setEnabled(ready && !busy);
         checkButton.setEnabled(ready && !busy);
-
         boolean bridgeCachedReady = SensorController.isBridgeReadyCached(this);
         boolean repairMarked = SensorController.isRepairRequired(this);
-        // A routine 10-second check of an already healthy bridge is NOT
-        // reconnecting. Only a genuinely unready/repair-marked bridge can
-        // enter that UI state.
+        boolean pairingRevoked = SensorController.ISSUE_PAIRING_REVOKED.equals(
+                SensorController.getConnectionIssue(this));
         boolean recovering = ConnectionDisplayState.isReconnecting(
                 SensorController.isBackgroundRecoveryInFlight(),
-                bridgeCachedReady, repairMarked);
+                bridgeCachedReady, repairMarked && !pairingRevoked);
         boolean repairRequired = ready && repairMarked && !recovering;
         connectionCard.setVisibility(repairRequired ? View.VISIBLE : View.GONE);
         if (repairRequired) {
             String issue = SensorController.getConnectionIssue(this);
-            int textRes;
-            if (SensorController.ISSUE_PAIRING_REVOKED.equals(issue)) {
-                textRes = R.string.connection_pairing_revoked;
-            } else if (SensorController.ISSUE_NETWORK_REQUIRED.equals(issue)) {
-                textRes = R.string.connection_network_needed;
-            } else {
-                textRes = R.string.connection_repair_required;
-            }
+            int textRes = SensorController.ISSUE_PAIRING_REVOKED.equals(issue)
+                    ? R.string.connection_pairing_revoked
+                    : SensorController.ISSUE_NETWORK_REQUIRED.equals(issue)
+                    ? R.string.connection_network_needed
+                    : R.string.connection_repair_required;
             connectionBody.setText(getString(textRes));
         }
 
-        int mode = MainControlPreferences.getMode(this);
-        boolean hasState = SensorController.hasKnownState(this);
-        boolean verifiedConnection =
-                ConnectionDisplayState.isVerified(ready, bridgeCachedReady, repairMarked);
-
-        if (!hasState) {
+        boolean known = SensorController.hasKnownState(this);
+        boolean verified = ConnectionDisplayState.isSensorStateVerified(
+                ready, bridgeCachedReady, repairMarked, pairingRevoked);
+        refreshSensorControls(ready, busy, known, verified);
+        if (!known) {
             overallStatus.setText(recovering
                     ? getString(R.string.main_reconnecting)
                     : getString(R.string.status_unknown));
             overallStatus.setTextColor(getColor(recovering
                     ? R.color.warning : R.color.text_primary));
-            cameraStatus.setText(getString(R.string.camera) + "  •  "
-                    + getString(R.string.status_unknown));
-            microphoneStatus.setText(getString(R.string.microphone) + "  •  "
-                    + getString(R.string.status_unknown));
-            actualGlobalStatus.setText(getString(R.string.main_actual_state_unknown));
-            primaryButton.setText(getString(mode == TilePreferences.MODE_BOTH
-                    ? R.string.main_connect_and_change
-                    : R.string.main_connect_and_change_single));
+            overallStatus.setTextColor(getColor(R.color.warning));
         } else {
             boolean cam = SensorController.getCachedCameraBlocked(this);
             boolean mic = SensorController.getCachedMicrophoneBlocked(this);
-            int stateWord = verifiedConnection ? R.string.main_actual_state
-                    : R.string.main_last_verified_state;
-            actualGlobalStatus.setText(getString(stateWord, actualOverallText(cam, mic)));
-            int prefix = verifiedConnection ? R.string.main_current_value
-                    : R.string.main_last_verified_value;
-            cameraStatus.setText(getString(R.string.camera) + "  •  "
-                    + getString(prefix, getString(cam ? R.string.blocked : R.string.available)));
-            microphoneStatus.setText(getString(R.string.microphone) + "  •  "
-                    + getString(prefix, getString(mic ? R.string.blocked : R.string.available)));
-
-            if (!verifiedConnection) {
+            if (!verified) {
                 overallStatus.setText(recovering
                         ? getString(R.string.main_reconnecting)
                         : getString(R.string.main_connection_unverified));
                 overallStatus.setTextColor(getColor(R.color.warning));
-                primaryButton.setText(getString(mode == TilePreferences.MODE_BOTH
-                    ? R.string.main_connect_and_change
-                    : R.string.main_connect_and_change_single));
             } else {
-                boolean allSelectedBlocked =
-                        ((mode & TilePreferences.MODE_CAMERA) == 0 || cam)
-                        && ((mode & TilePreferences.MODE_MICROPHONE) == 0 || mic);
-                boolean anySelectedBlocked =
-                        ((mode & TilePreferences.MODE_CAMERA) != 0 && cam)
-                        || ((mode & TilePreferences.MODE_MICROPHONE) != 0 && mic);
-                if (allSelectedBlocked) {
-                    overallStatus.setText(getString(mode == TilePreferences.MODE_BOTH
-                            ? R.string.status_protected : R.string.main_selected_protected_single));
-                    overallStatus.setTextColor(getColor(R.color.success));
-                    primaryButton.setText(getString(mode == TilePreferences.MODE_BOTH
-                            ? R.string.allow_action : R.string.main_allow_selected_single));
-                } else if (anySelectedBlocked) {
-                    // Partial state requires both sensors to be selected:
-                    // a single selected sensor has a binary on/off state.
-                    overallStatus.setText(getString(R.string.main_selected_partial));
-                    overallStatus.setTextColor(getColor(R.color.warning));
-                    primaryButton.setText(getString(mode == TilePreferences.MODE_BOTH
-                            ? R.string.main_protect_selected
-                            : R.string.main_protect_selected_single));
-                } else {
-                    overallStatus.setText(getString(mode == TilePreferences.MODE_BOTH
-                            ? R.string.status_off : R.string.main_selected_available_single));
-                    overallStatus.setTextColor(getColor(R.color.text_primary));
-                    primaryButton.setText(getString(mode == TilePreferences.MODE_BOTH
-                            ? R.string.protect_action : R.string.main_protect_selected_single));
-                }
+                overallStatus.setText(getString(protectionSummaryRes(cam, mic)));
+                overallStatus.setTextColor(getColor(cam && mic
+                        ? R.color.success : !cam && !mic
+                        ? R.color.text_primary : R.color.warning));
             }
         }
-
+        // Healthy protection already appears on the two sensor buttons and summary.
+        // Show inline messages only for connection problems, not duplicate success copy.
         String last = SensorController.getLastMessage(this);
-        message.setText(last == null ? "" : last);
+        if (!verified && last != null && !last.isEmpty()) {
+            showInlineError(last);
+        } else {
+            showInlineError("");
+        }
     }
 
-    private void toggleProtection() {
+    private void toggleSensor(int mode) {
         if (!hasSecurePermission()) {
             message.setText(getString(R.string.setup_required));
             return;
         }
-
-        message.setText(getString(R.string.working));
-        primaryButton.setEnabled(false);
+        showInlineError(getString(R.string.working));
+        cameraControlButton.setEnabled(false);
+        microphoneControlButton.setEnabled(false);
         checkButton.setEnabled(false);
-
-        // Capture this main-control mode at tap time. Quick Settings has a
-        // separate preference and is never changed by the main switches.
-        final int mode = MainControlPreferences.getMode(this);
+        // The single-sensor mode is captured at tap time; Quick Settings is independent.
         boolean accepted = SensorController.toggle(getApplicationContext(), mode, result -> {
             refreshUi();
             if (!result.success) message.setText(result.message);
         });
-
         if (!accepted) {
             refreshUi();
             message.setText(getString(R.string.operation_in_progress));
@@ -532,13 +459,14 @@ public class MainActivity extends Activity {
             return;
         }
 
-        message.setText(getString(R.string.checking));
-        primaryButton.setEnabled(false);
+        showInlineError(getString(R.string.checking));
+        cameraControlButton.setEnabled(false);
+        microphoneControlButton.setEnabled(false);
         checkButton.setEnabled(false);
 
         SensorController.verify(getApplicationContext(), result -> {
-            message.setText(result.message);
             refreshUi();
+            if (!result.success) showInlineError(result.message);
         });
     }
 
@@ -563,18 +491,7 @@ public class MainActivity extends Activity {
                 || SensorController.isBridgeReadyCached(this)
                 || SensorController.isBackgroundRecoveryInFlight();
         if (hasSecurePermission() && everConnected) {
-            setupCheckInProgress = true;
-            message.setText(getString(R.string.pair_checking_existing));
-            SensorController.refreshConnectionHealth(getApplicationContext(), result -> {
-                setupCheckInProgress = false;
-                if (result.success && PairingReceiver.alreadyConnected(this)) {
-                    PairingReceiver.clearPairingNotifications(this);
-                    message.setText(getString(R.string.connection_ready));
-                    refreshUi();
-                    return;
-                }
-                promptManualPairing();
-            });
+            repairConnection();
             return;
         }
         continueSetupAfterHealthCheck();
@@ -592,27 +509,106 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private void showRepairResult(int textRes) {
+        if (isFinishing() || isDestroyed()) return;
+        refreshUi();
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.repair_connection))
+                .setMessage(getString(textRes))
+                .setPositiveButton(getString(R.string.close), null)
+                .show();
+    }
+
+    private void endRepairCheck() {
+        setupCheckInProgress = false;
+        reconnectButton.setEnabled(true);
+    }
+    private void showInconclusiveRepair() {
+        refreshUi();
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.repair_connection))
+                .setMessage(getString(R.string.pair_verification_inconclusive))
+                .setPositiveButton(getString(R.string.guide_repair_open),
+                        (dialog, which) -> continueSetupAfterHealthCheck())
+                .setNegativeButton(getString(R.string.close), null)
+                .show();
+    }
+
+
     private void repairConnection() {
         if (!hasSecurePermission()) {
             openGuide();
             return;
         }
-        if (setupCheckInProgress) return;
-
+        if (setupCheckInProgress || SensorController.isToggleInFlight()) return;
         setupCheckInProgress = true;
-        message.setText(getString(R.string.pair_checking_existing));
+        showInlineError(getString(R.string.pair_checking_existing));
         reconnectButton.setEnabled(false);
 
+        // Try the actual local bridge and recovery first. This works even if Wi-Fi
+        // was turned off after pairing; an ADB TLS probe alone cannot prove service health.
         SensorController.refreshConnectionHealth(getApplicationContext(), result -> {
-            setupCheckInProgress = false;
-            reconnectButton.setEnabled(true);
-            if (result.success && PairingReceiver.alreadyConnected(this)) {
+            if (isFinishing() || isDestroyed()) return;
+            boolean pairingRevoked = SensorController.ISSUE_PAIRING_REVOKED.equals(
+                    SensorController.getConnectionIssue(this));
+            if (result.success && !pairingRevoked && !SensorController.isRepairRequired(this)) {
+                endRepairCheck();
                 PairingReceiver.clearPairingNotifications(this);
-                message.setText(getString(R.string.connection_ready));
-                refreshUi();
+                showRepairResult(R.string.repair_connection_verified);
                 return;
             }
-            promptManualPairing();
+
+            // Once the local service fails, repairing saved ADB authorization may
+            // require Wi-Fi. Never present lack of Wi-Fi as proof of revoked pairing.
+            if (!ConnectionMonitor.hasWifiTransport(this)) {
+                endRepairCheck();
+                showRepairResult(result.success
+                        ? R.string.repair_pairing_wifi_needed
+                        : R.string.repair_wifi_needed);
+                return;
+            }
+
+            if (pairingRevoked) {
+                // This state was already established by the existing connection monitor.
+                // Offer manual pairing without pretending the existing local bridge is broken.
+                endRepairCheck();
+                refreshUi();
+                promptManualPairing();
+                return;
+            }
+
+            PairingValidator.validateAsync(getApplicationContext(), true, outcome -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (outcome == PairingValidator.Outcome.REVOKED) {
+                    endRepairCheck();
+                    refreshUi();
+                    promptManualPairing();
+                    return;
+                }
+                if (outcome == PairingValidator.Outcome.NO_WIFI) {
+                    endRepairCheck();
+                    showRepairResult(R.string.repair_wifi_needed);
+                    return;
+                }
+                if (outcome != PairingValidator.Outcome.AUTHENTICATED) {
+                    endRepairCheck();
+                    // Unknown authentication is not invalid pairing. Manual pairing
+                    // remains available as an explicit opt-in, never forced.
+                    showInconclusiveRepair();
+                    return;
+                }
+
+                SensorController.refreshConnectionHealth(getApplicationContext(), retry -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    endRepairCheck();
+                    if (retry.success && !SensorController.isRepairRequired(this)) {
+                        PairingReceiver.clearPairingNotifications(this);
+                        showRepairResult(R.string.repair_connection_restored);
+                    } else {
+                        showRepairResult(R.string.pair_verification_bridge_unavailable);
+                    }
+                });
+            });
         });
     }
 
@@ -765,20 +761,16 @@ public class MainActivity extends Activity {
         menu.show();
     }
     private void showMore() {
-        String[] items = {
-                getString(R.string.repair_connection),
-                getString(R.string.restore_setup_settings)
-        };
-
+        boolean temporarySettings = SensorController.hasTemporaryDebugSettings(this);
+        String[] items = temporarySettings
+                ? new String[]{getString(R.string.repair_connection),
+                        getString(R.string.restore_setup_settings)}
+                : new String[]{getString(R.string.repair_connection)};
         new AlertDialog.Builder(this)
                 .setTitle(getString(R.string.more_title))
-                .setMessage(getString(R.string.more_body))
                 .setItems(items, (dialog, which) -> {
-                    if (which == 0) {
-                        repairConnection();
-                    } else {
-                        confirmRestoreTemporarySettings();
-                    }
+                    if (which == 0) repairConnection();
+                    else confirmRestoreTemporarySettings();
                 })
                 .setNegativeButton(getString(R.string.close), null)
                 .show();
@@ -796,8 +788,11 @@ public class MainActivity extends Activity {
                 .setMessage(getString(R.string.restore_setup_settings_body))
                 .setPositiveButton(getString(R.string.restore_action), (dialog, which) -> {
                     SensorController.cleanupNow(getApplicationContext());
-                    message.setText(getString(R.string.setup_settings_restored));
-                    refreshUi();
+                    if (SensorController.hasTemporaryDebugSettings(this)) {
+                        showRepairResult(R.string.operation_failed);
+                    } else {
+                        showRepairResult(R.string.setup_settings_restored);
+                    }
                 })
                 .setNegativeButton(getString(R.string.close), null)
                 .show();
@@ -828,7 +823,7 @@ public class MainActivity extends Activity {
         try {
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Throwable ignored) {
-            return "1.1.0";
+            return "1.2.0";
         }
     }
 
@@ -867,32 +862,13 @@ public class MainActivity extends Activity {
         return view;
     }
 
-    private Button primaryButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextSize(16);
-        button.setTextColor(Color.WHITE);
-        button.setAllCaps(false);
-        button.setGravity(Gravity.CENTER);
-        button.setMinHeight(dp(58));
-
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(getColor(R.color.accent));
-        bg.setCornerRadius(dp(16));
-        button.setBackground(bg);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, dp(18), 0, 0);
-        button.setLayoutParams(lp);
-        return button;
-    }
-
     private Button secondaryButton(String text) {
         Button button = new Button(this);
         button.setText(text);
         button.setTextSize(14);
         button.setTextColor(getColor(R.color.accent));
-        button.setAllCaps(false);        button.setGravity(Gravity.CENTER);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(48));
 
         GradientDrawable bg = new GradientDrawable();
@@ -915,7 +891,8 @@ public class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setMinHeight(dp(38));
         button.setMinimumWidth(0);
-        button.setPadding(dp(14), 0, dp(14), 0);        GradientDrawable bg = new GradientDrawable();
+        button.setPadding(dp(14), 0, dp(14), 0);
+        GradientDrawable bg = new GradientDrawable();
         bg.setColor(getColor(R.color.surface));
         bg.setStroke(dp(1), getColor(R.color.divider));
         bg.setCornerRadius(dp(20));

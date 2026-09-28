@@ -2,18 +2,18 @@
 
 Sensor Lock is an open-source Android privacy utility by ELUQEN for system-level camera and microphone control.
 
-It can block or allow both sensors, verify their real state, show a Mixed state when camera and microphone differ, and expose the same control as a Quick Settings tile.
+It provides independent one-tap controls for Camera and Microphone, verifies their actual state, and offers a separately configured Quick Settings tile.
 
 ## Download
 
-Signed public APK: releases/SensorLock-1.1.0.apk (previous version: releases/SensorLock-1.0.0.apk)
+Signed public APK: releases/SensorLock-1.2.0.apk (previous version: releases/SensorLock-1.1.0.apk)
 
 - Package: com.eluqen.sensorlock
-- Version: 1.1.0
-- Version code: 2
+- Version: 1.2.0
+- Version code: 3
 - Minimum Android: Android 11 / API 30
 - Target SDK: 35
-- SHA-256: c7aee394b03f88873345fb7ae957c907327d58dc3eccfffb5a0936315c7a1fc3
+- SHA-256: 79680abf4b6ea68e466caeaca6071329b7acb4101d99dce6d595da6e316244a7
 
 ELUQEN signing certificate SHA-256:
 AC:22:3F:F9:0D:1F:DA:E6:F5:5F:0D:7C:2C:C6:EE:34:7C:20:E1:61:EE:D4:2A:24:A0:38:84:A6:3D:CF:20:34
@@ -50,23 +50,21 @@ After successful setup, normal protection commands run through a local service o
 7. Enable Wireless debugging if needed.
 8. Tap Pair device with pairing code and keep that screen open.
 9. Open the Sensor Lock notification.
-10. Enter and submit the 6-digit pairing code in the Sensor Lock notification; the app discovers the local pairing port automatically.
+10. Enter and submit the six-digit code in the Sensor Lock notification.
 11. Wait for setup to finish. The pairing notification disappears automatically when the connection is ready.
 
 ## Normal use
 
 Once connected:
-- Select Camera, Microphone, or both on the main screen (one sensor must remain selected).
-- Protect or Allow applies to the selected sensors. The Quick Settings tile has its own independent sensor target.
-- Check protection verifies the real current state.
-- The Quick Settings tile performs the same control without opening the app.
-- Camera and microphone are tracked separately.
+- Tap Camera or Microphone to block or allow only that sensor; no separate selection step is needed.
+- The summary identifies Camera protected, Microphone protected, Fully protected, or Protection off.
+- Check protection reads the actual sensor state without changing either setting.
+- Configure the Quick Settings tile separately for Camera, Microphone, or both.
+- The Connection Status panel appears when the app needs connection repair.
 
-### Mixed state
+### Separate sensor states
 
-Android or another system event can sometimes change only one sensor, for example during a call.
-
-Sensor Lock does not hide this. If one sensor is blocked and the other is available, the app reports Mixed state. Using Protect attempts to block both again.
+Android or another system event may change one sensor independently, for example during a call. Sensor Lock displays the resulting protection state without changing the other sensor. An unverified last-known state must not be mistaken for live confirmation.
 
 ## Reboot and recovery
 
@@ -82,6 +80,7 @@ There is no permanent connected notification after successful setup.
 | --- | --- |
 | WRITE_SECURE_SETTINGS | Granted locally during setup so Sensor Lock can manage temporary setup/debug settings needed for recovery. |
 | INTERNET | Required by Android for the local ADB/TLS socket used during pairing or repair. Sensor Lock has no cloud API backend. |
+| ACCESS_NETWORK_STATE | Detects whether Wi-Fi is available for local pairing and recovery. |
 | POST_NOTIFICATIONS | Pairing code entry and connection-loss/reconnect alerts. |
 | RECEIVE_BOOT_COMPLETED | Attempts service recovery after reboot. |
 | Quick Settings tile binding | Lets Android expose the Sensor Lock tile. |

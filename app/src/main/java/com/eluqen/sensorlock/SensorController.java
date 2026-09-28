@@ -1014,6 +1014,7 @@ public final class SensorController {
 
     public static void pairingCompleted(Context c) {
         pairingVerified(c);
+        PairingValidator.pairedSuccessfully(c);
         prefs(c).edit()
                 .putBoolean(REPAIR_REQUIRED, false)
                 .putString(CONNECTION_ISSUE, ISSUE_NONE)
@@ -1083,7 +1084,7 @@ public final class SensorController {
         }
     }
 
-    private static void markPairingStale(Context c) {
+    static void markPairingStale(Context c) {
         boolean bridgeStillReady = LocalShellClient.ping(c);
         prefs(c).edit()
                 .putBoolean(PAIRED_OK, false)

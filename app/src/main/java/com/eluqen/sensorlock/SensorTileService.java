@@ -233,15 +233,16 @@ public class SensorTileService extends TileService {
             return;
         }
 
-        if (SensorController.isBackgroundRecoveryInFlight()) {
-            tile.setState(Tile.STATE_INACTIVE);
-            tile.setSubtitle(localized.getString(R.string.tile_reconnecting));
-            tile.updateTile();
-            return;
-        }
+        // A background health/recovery probe must not temporarily invert the real
+        // sensor protection state shown to the user. Keep the last known state
+        // until a new authoritative sensor result arrives.
 
+        boolean pairingRepair = SensorController.isRepairRequired(this)
+                && SensorController.ISSUE_PAIRING_REVOKED.equals(
+                        SensorController.getConnectionIssue(this));
+        // A live bridge still permits real sensor control after ADB pairing is revoked.
         if (!SensorController.isBridgeReadyCached(this)
-                || SensorController.isRepairRequired(this)) {
+                || (SensorController.isRepairRequired(this) && !pairingRepair)) {
             tile.setState(Tile.STATE_INACTIVE);
             tile.setSubtitle(localized.getString(R.string.tile_connection_unavailable));
             tile.updateTile();
@@ -279,6 +280,10 @@ public class SensorTileService extends TileService {
             tile.setSubtitle(localized.getString(R.string.tile_mixed));
         }
 
+        if (pairingRepair) {
+            tile.setSubtitle(localized.getString(
+                    R.string.tile_pairing_repair_with_state, tile.getSubtitle()));
+        }
         tile.updateTile();
     }
 
